@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { FilesetResolver, FaceLandmarker } from '@mediapipe/tasks-vision';
 
 /**
@@ -48,31 +48,17 @@ function initThree() {
     camera.position.z = CONFIG.cameraZ;
 
     // Lighting
-    // // Use RoomEnvironment for "model-viewer" like default lighting
-    // const pmremGenerator = new THREE.PMREMGenerator(renderer);
-    // scene.environment = pmremGenerator.fromScene(new RoomEnvironment()).texture;
-    // scene.environmentIntensity = 1; // Requested intensity
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
-    scene.add(ambientLight);
+    new RGBELoader()
+        .load('brown_photostudio_02_1k.hdr', function (texture) {
+            texture.mapping = THREE.EquirectangularReflectionMapping;
+            scene.environment = texture;
+            scene.environmentIntensity = 1.0;
+            // scene.background = texture; // Optional: show background
+        });
+
     const dirLight = new THREE.DirectionalLight(0xffffff, 3);
     dirLight.position.set(0, 2, 2);
     scene.add(dirLight);
-    const backLight = new THREE.DirectionalLight(0xffffff, 3);
-    backLight.position.set(0, -2, 2);
-    scene.add(backLight);
-
-    // Keep ambient light for base? Or remove if environment is enough? 
-    // Usually RoomEnvironment is sufficient but we can keep subtle ambient.
-    // scene.remove(ambientLight); // Optional based on visual preference
-
-    // Existing lights might clash or add up. Let's keep them but maybe lower them or rely on Env.
-    // User asked for "Default cubemap environment" look.
-
-    // const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
-    // scene.add(ambientLight);
-    // const dirLight = new THREE.DirectionalLight(0xffffff, 3);
-    // dirLight.position.set(0, 2, 2);
-    // scene.add(dirLight);
 
     // Handle Resize
     window.addEventListener('resize', onWindowResize, false);
