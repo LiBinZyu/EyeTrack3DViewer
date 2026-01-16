@@ -1,0 +1,29 @@
+body {
+    margin: 0;
+    overflow: hidden;
+    background-color: #000;
+    font-family: sans-serif;
+}
+
+#canvas-container {
+    width: 100vw;
+    height: 100vh;
+    display: block;
+}
+
+#debug-overlay {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    color: white;
+    background: rgba(0, 0, 0, 0.5);
+    padding: 10px;
+    border-radius: 5px;
+    pointer-events: auto;
+}
+
+#calibrate-btn {
+    margin-top: 5px;
+    padding: 5px 10px;
+    cursor: pointer;
+}
