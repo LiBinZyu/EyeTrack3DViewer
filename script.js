@@ -15,6 +15,16 @@ const CONFIG = {
     parallaxScale: 1.5, // Multiplier for the effect intensity
 };
 
+const OBSERVER_CONTROL_PARAMS = {
+    pitchSpeed: 0.002, // Radians per pixel
+    yawSpeed: 0.002,
+    moveSpeed: 0.001,  // Meters per pixel (pan)
+    zoomSpeed: 0.002,   // Meters per tick
+    fov: 50,
+    near: 0.01,
+    far: 1000
+};
+
 /**
  * State
  */
@@ -26,7 +36,12 @@ const state = {
     faceLandmarker: null,
     lastVideoTime: -1,
     calibratedCenter: new THREE.Vector3(0, 0, 0), // Used to 'zero' the user's position
-    mixer: null // Animation Mixer
+    calibratedCenter: new THREE.Vector3(0, 0, 0), // Used to 'zero' the user's position
+    mixer: null, // Animation Mixer
+    observerCamera: null,
+    isObserverMode: false,
+    observerAngles: { pitch: 0, yaw: 0 }, // Store angles for observer camera
+    cameraHelper: null // Visualizes the frustration
 };
 
 const clock = new THREE.Clock();
@@ -46,6 +61,34 @@ function initThree() {
 
     // Initial Camera Pos
     camera.position.z = CONFIG.cameraZ;
+
+    // Observer Camera Setup
+    state.observerCamera = new THREE.PerspectiveCamera(
+        OBSERVER_CONTROL_PARAMS.fov,
+        window.innerWidth / window.innerHeight,
+        OBSERVER_CONTROL_PARAMS.near,
+        OBSERVER_CONTROL_PARAMS.far
+    );
+    state.observerCamera.position.set(0, 0.5, 2); // Initial observer position
+    state.observerCamera.lookAt(0, 0, 0);
+
+    // Add main camera to scene so its children (eyes) are rendered
+    scene.add(camera);
+
+    // Camera Helper
+    state.cameraHelper = new THREE.CameraHelper(camera);
+    state.cameraHelper.visible = false; // Hidden by default
+    scene.add(state.cameraHelper);
+
+    // Load Eyes model and attach to main camera
+    const gltfLoader = new GLTFLoader();
+    gltfLoader.load('./eyes.glb', (gltf) => {
+        const eyes = gltf.scene;
+        // Optionally scale or position eyes relative to camera if needed
+        eyes.position.set(0, 0, 0);
+        eyes.rotation.y = Math.PI; // Face forward
+        camera.add(eyes); // Child of camera
+    }, undefined, (e) => console.error("Error loading eyes.glb", e));
 
     // Lighting
     new RGBELoader()
@@ -69,6 +112,10 @@ function initThree() {
 
 function onWindowResize() {
     renderer.setSize(window.innerWidth, window.innerHeight);
+    if (state.observerCamera) {
+        state.observerCamera.aspect = window.innerWidth / window.innerHeight;
+        state.observerCamera.updateProjectionMatrix();
+    }
     updateProjectionMatrix();
 }
 
@@ -240,29 +287,66 @@ window.addEventListener('mousemove', (e) => {
         y: e.clientY - previousMousePosition.y
     };
 
-    if (isDragging) {
-        // Rotate:
-        // X-Move -> Y-Rotate (Yaw)
-        // Y-Move -> X-Rotate (Pitch) - Smaller amplitude requested
+    if (state.isObserverMode) {
+        // --- Observer Controls ---
+        const obsCam = state.observerCamera;
 
-        const pitchSensitivity = 0.1; // Small amplitude for pitch
-        const yawSensitivity = 0.5;
+        if (isDragging) {
+            // Yaw (rotate around Y world)
+            state.observerAngles.yaw -= deltaMove.x * OBSERVER_CONTROL_PARAMS.yawSpeed;
+            // Pitch (rotate around X local)
+            state.observerAngles.pitch -= deltaMove.y * OBSERVER_CONTROL_PARAMS.pitchSpeed;
 
-        const deltaRotationQuaternion = new THREE.Quaternion()
-            .setFromEuler(new THREE.Euler(
-                toRad(deltaMove.y * pitchSensitivity),
-                toRad(deltaMove.x * yawSensitivity),
-                0,
-                'XYZ'
-            ));
+            // Clamp pitch to avoid flipping
+            state.observerAngles.pitch = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, state.observerAngles.pitch));
 
-        model.quaternion.multiplyQuaternions(deltaRotationQuaternion, model.quaternion);
-    }
+            const q = new THREE.Quaternion();
+            q.setFromEuler(new THREE.Euler(state.observerAngles.pitch, state.observerAngles.yaw, 0, 'YXZ'));
+            obsCam.quaternion.copy(q);
+            // We orbit around position or just rotate in place?
+            // User asked "control position and rotation".
+            // Standard FPS/Free fly or Orbit? 
+            // "New camera to observe scene and camera position" + "adjustable position and rotation"
+            // Let's implement free-look rotation from current position. Position handled by right click pan.
+        }
 
-    if (isPanning) {
-        const panSpeed = 0.001;
-        model.position.x += deltaMove.x * panSpeed;
-        model.position.y -= deltaMove.y * panSpeed;
+        if (isPanning) {
+            // Move camera in plane perpendicular to look direction
+            const moveSpeed = OBSERVER_CONTROL_PARAMS.moveSpeed;
+            obsCam.translateX(-deltaMove.x * moveSpeed);
+            obsCam.translateY(deltaMove.y * moveSpeed);
+        }
+
+    } else {
+        // --- Object Controls (Normal Mode) ---
+        if (isDragging) {
+            // Rotate:
+            // X-Move -> Y-Rotate (Yaw)
+            // Y-Move -> X-Rotate (Pitch) - Smaller amplitude requested
+
+            const pitchSensitivity = 0.1; // Small amplitude for pitch
+            const yawSensitivity = 0.5;
+
+            const deltaRotationQuaternion = new THREE.Quaternion()
+                .setFromEuler(new THREE.Euler(
+                    toRad(deltaMove.y * pitchSensitivity),
+                    toRad(deltaMove.x * yawSensitivity),
+                    0,
+                    'XYZ'
+                ));
+
+            const model = currentModelGroup;
+            if (model) model.quaternion.multiplyQuaternions(deltaRotationQuaternion, model.quaternion);
+        }
+
+        if (isPanning) {
+            const panSpeed = 0.001;
+            const model = currentModelGroup;
+            if (model) {
+                model.position.x += deltaMove.x * panSpeed;
+                model.position.y -= deltaMove.y * panSpeed;
+            }
+        }
     }
 
     previousMousePosition = { x: e.clientX, y: e.clientY };
@@ -274,26 +358,36 @@ window.addEventListener('mouseup', () => {
 });
 
 window.addEventListener('wheel', (e) => {
-    const model = currentModelGroup;
-    if (!model) return;
+    // Zoom
+    if (state.isObserverMode) {
+        // Observer Zoom -> Move forward/back
+        const obsCam = state.observerCamera;
+        const zoomSpeed = OBSERVER_CONTROL_PARAMS.zoomSpeed * 100; // Adjust scale for scroll
+        const forward = new THREE.Vector3(0, 0, -1);
+        forward.applyQuaternion(obsCam.quaternion);
+        // deltaY > 0 is scroll down (zoom out/move back)
+        const direction = e.deltaY > 0 ? -1 : 1;
+        obsCam.position.addScaledVector(forward, direction * zoomSpeed);
 
-    // Zoom / Scale - Relative
-    // e.deltaY > 0 (scroll down) -> Factor < 1 (Shrink)
-    // e.deltaY < 0 (scroll up)   -> Factor > 1 (Grow)
+    } else {
+        // Normal Zoom (Scale Model)
+        const model = currentModelGroup;
+        if (!model) return;
 
-    const zoomIntensity = 0.05;
-    const factor = Math.exp(-Math.sign(e.deltaY) * zoomIntensity);
+        const zoomIntensity = 0.05;
+        const factor = Math.exp(-Math.sign(e.deltaY) * zoomIntensity);
 
-    let newScale = model.scale.x * factor;
+        let newScale = model.scale.x * factor;
 
-    // Clamp relative to initial scale (e.g. 0.01x to 100x range)
-    // User requested wide range.
-    const minScale = currentInitialScale * 0.01;
-    const maxScale = currentInitialScale * 100.0;
+        // Clamp relative to initial scale (e.g. 0.01x to 100x range)
+        // User requested wide range.
+        const minScale = currentInitialScale * 0.01;
+        const maxScale = currentInitialScale * 100.0;
 
-    newScale = Math.max(minScale, Math.min(newScale, maxScale));
+        newScale = Math.max(minScale, Math.min(newScale, maxScale));
 
-    model.scale.set(newScale, newScale, newScale);
+        model.scale.set(newScale, newScale, newScale);
+    }
 }, { passive: false });
 
 
@@ -397,7 +491,15 @@ function animate() {
     }
 
     updateProjectionMatrix();
-    renderer.render(scene, camera);
+    if (state.cameraHelper) {
+        state.cameraHelper.update();
+    }
+
+    if (state.isObserverMode) {
+        renderer.render(scene, state.observerCamera);
+    } else {
+        renderer.render(scene, camera);
+    }
 }
 
 
@@ -413,4 +515,12 @@ document.getElementById('calibrate-btn').addEventListener('click', () => {
     state.calibratedCenter.x = lastRawTarget.x;
     state.calibratedCenter.y = lastRawTarget.y;
     console.log("Calibrated Center to:", state.calibratedCenter);
+});
+
+document.getElementById('observer-view-check').addEventListener('change', (e) => {
+    state.isObserverMode = e.target.checked;
+    if (state.cameraHelper) {
+        state.cameraHelper.visible = state.isObserverMode;
+    }
+    console.log("Observer Mode:", state.isObserverMode);
 });
